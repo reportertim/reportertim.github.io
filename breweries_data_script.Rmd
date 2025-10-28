@@ -1,0 +1,386 @@
+---
+title: "First Coast Brewery Data"
+runningheader: "First Coast Brewery Data" # only for pdf output
+author: "Timothy Gibbons/Jacksonville Business Journal"
+date: "`r Sys.Date()`"
+output:
+  prettydoc::html_pretty:
+    theme: leonids
+    highlight: github
+---
+
+```{r setup, include=FALSE}
+
+library(tidyverse)
+library(janitor)
+library(dbplyr)
+library(lubridate)
+library(dplyr)
+library(readxl)
+library(DatawRappr)
+library(purrr)
+library(stringr)
+library(data.table)
+library(hrbrthemes)
+library(ggplot2)
+
+datawrapper_auth(api_key = "EkZeD3Se7zfgF2a3k2CrVLlIUfK8O0qLtTYQcMIx1fw8EwDQrOjhw1ZFkiDpJnli")
+
+```
+
+```{r get-license-data, echo=FALSE, message=FALSE}
+
+#Gather and import licensing data
+
+#pulls in the Alcoholic Beverage Distributors, Importers, Exporters, and Manufacturers Licenses file from the state if previous download >12 hours ago, sets type to character and cleans up column names
+
+if(as.numeric(difftime(Sys.time(), file.mtime("bd4005lic.csv"), unit="hours"))> 12){
+  download.file("http://www.myfloridalicense.com/dbpr/sto/file_download/extracts/bd4005lic.csv","bd4005lic.csv")
+}
+
+alcohol_Florida<-read_csv("bd4005lic.csv") %>% clean_names()
+
+alcohol_Florida$original_licensure_date <- mdy(alcohol_Florida$original_licensure_date)
+alcohol_Florida$effective_date <- mdy(alcohol_Florida$effective_date)
+alcohol_Florida$expiration_date <- mdy(alcohol_Florida$expiration_date)
+```
+
+```{r pulls-breweries, echo=FALSE, message=FALSE}
+
+#Creates state and local brewery files
+
+#Pulls out breweries/brewpubs statewide
+florida_breweries <- alcohol_Florida %>% filter(series=="CMB") %>% arrange(original_licensure_date)
+
+# specify local counties
+firstcoast <- data.frame(stringsAsFactors = FALSE, "county"=c("Baker","Clay","Duval","Flagler","Nassau","Putnam","St_Johns"), "county_number"=c(12, 20, 26, 28, 55, 64, 65))
+
+#Pulls out First Coast breweries/brewpubs
+fc_breweries <- alcohol_Florida %>% 
+  filter(location_county %in% firstcoast$county_number & series=="CMB") %>%
+  filter(owner_name != "ANHEUSER BUSCH LLC")  %>% arrange(original_licensure_date)
+```
+```{r first-coast-growth, echo=FALSE}
+
+```
+
+
+# Overview
+
+As of `r format(Sys.Date(), "%B %d, %Y")`, there are `r nrow(florida_breweries)` breweries with current licenses in the state of Florida, dating back to `r str_to_title(florida_breweries$dba[1])`,  which received its license on `r format(florida_breweries$original_licensure_date[1], "%B %d, %Y")`.
+
+This data updates automatically when the script is run, but it can be manually downloaded [here](http://www.myfloridalicense.com/dbpr/sto/file_download/extracts/bd4005lic.csv).
+
+
+On the First Coast^[Baker, Clay, Duval, Flagler, Nassau, Putnam and St. Johns counties], there are `r nrow(fc_breweries)` breweries with current licenses. The first, `r str_to_title(fc_breweries$dba[1])`, was issued its license on an original date of `r format(fc_breweries$original_licensure_date[1], "%B %d, %Y")`.
+
+
+```{r brewery-number-chart, echo=FALSE}
+#Pie chart showing Jacksonville brewery percentage
+
+# Gets count
+florida_brewery_number <-nrow(florida_breweries)
+fc_brewery_number <-nrow(fc_breweries)
+rest_of_state_number <- florida_brewery_number-fc_brewery_number
+
+# Create Data
+brewery_count <- data.frame(
+  group=c("Rest of Florida", "First Coast"),
+  value=c(rest_of_state_number,fc_brewery_number)
+)
+
+#Compute the position of labels
+brewery_count <- brewery_count%>% 
+  arrange(desc(group)) %>%
+  mutate(prop = value / sum(brewery_count$value) *100) %>%
+  mutate(ypos = cumsum(prop)- 0.5*prop )
+
+
+# Make piechart
+ggplot(brewery_count, aes(x="", y=prop, fill=group)) +
+  geom_bar(stat="identity", width=1, color="white") +
+  coord_polar("y", start=0) +
+  theme_void() + 
+  theme(legend.position="none") +
+  geom_text(aes(y = ypos, label = group), color = "black", size=3) +
+  scale_fill_brewer(palette="Blues") +
+     ggtitle("Number of Breweries")
+```
+
+```{r brewery-number-chart-to-dw, echo=FALSE, results='hide', include=FALSE}
+#Sends chart datawrapper
+brewery_count_dw <- brewery_count
+brewery_count_dw$prop = NULL
+brewery_count_dw$ypos = NULL
+
+dw_data_to_chart(
+  x=brewery_count_dw,
+  chart_id = "9tpfF"
+)
+dw_publish_chart(chart_id = "9tpfF")
+  
+
+```
+
+An embeddable version of this chart can be [found here](https://datawrapper.dwcdn.net/9tpfF/1/).
+```{r reverse-order, message=FALSE, warning=FALSE, include=FALSE}
+florida_breweries <- florida_breweries %>% arrange(desc(effective_date))
+fc_breweries <- fc_breweries %>% arrange(desc(effective_date))
+```
+
+
+
+# Growth
+
+The number of breweries across the state has been steadily rising. The most recent brewery to be licensed in Florida is `r str_to_title(florida_breweries$dba[1])` in `r str_to_title(florida_breweries$location_city[1])`, which was permitted on `r format(florida_breweries$effective_date[1], "%B %d, %Y")`.
+
+**On the First Coast, the most recent permit was issued to `r str_to_title(fc_breweries$dba[1])` in `r str_to_title(fc_breweries$location_city[1])` on an effective date of `r format(fc_breweries$effective_date[1], "%B %d, %Y")`.**
+
+Here's how the brewery count across the First Coast has been increasing over the years. Note that this only includes breweries that still have an active license.
+
+
+
+```{r counts, echo=FALSE, message=FALSE, results='hide', include=FALSE}
+#----
+#Gets Count and Cumulative Count
+
+# creates dataframe with county and original license date, brings in county name, makes date _date_, pulls out year, counts cumulative
+fc_breweries_details<-fc_breweries[,c("owner_name","dba","location_county","original_licensure_date")]
+fc_breweries_details<-merge(fc_breweries_details,firstcoast,by.x="location_county", by.y="county_number")
+fc_breweries_details$original_licensure_date<-ymd(fc_breweries_details$original_licensure_date)
+fc_breweries_details$licenseyear<-format(fc_breweries_details$original_licensure_date, format="%Y")
+fc_breweries_details<-fc_breweries_details %>% relocate(county, .after=location_county)
+
+fc_breweries_details <- fc_breweries_details %>%
+  group_by(licenseyear) %>%
+  count(county) %>%
+  pivot_wider(names_from = county, values_from = n, values_fill = 0)
+
+fc_breweries_culm <- ungroup((fc_breweries_details))
+fc_breweries_culm <- fc_breweries_culm %>% 
+  mutate(
+    across(
+      .cols = -c(licenseyear),
+      cumsum,
+      .names = "Culm{.col}"
+    )
+  )
+
+fc_breweries_culm<- select(fc_breweries_culm, licenseyear, starts_with("Culm"))
+fc_breweries_culm <- fc_breweries_culm %>%
+  rename_with(~str_remove(., "Culm"))
+
+fc_breweries_culm <- fc_breweries_culm %>%
+  pivot_longer(
+    cols=!licenseyear,
+    names_to = "counties",
+    values_to = "breweries"
+  ) 
+
+```
+```{r first-coast-brewery-stacked, echo=FALSE}
+#Creates stacked bar chart of cumulative licenses
+
+ggplot(fc_breweries_culm,aes(x=licenseyear,y=breweries, fill=counties)) +
+  geom_bar(stat="identity") +
+  scale_fill_brewer(palette = "Blues")
+```
+
+
+```{r stacked-to-dw, echo=FALSE, results='hide', include=FALSE}
+#Sends data to datawrapper
+
+fc_breweries_culm_dw <- pivot_wider(fc_breweries_culm, names_from = counties, values_from = breweries)
+
+dw_data_to_chart(
+  x=fc_breweries_culm_dw,
+  chart_id = "WNjo5"
+)
+
+dw_publish_chart(chart_id = "WNjo5")
+```
+
+An embeddable version of the chart can be [found here](https://datawrapper.dwcdn.net/WNjo5/1/) 
+```{r sales-data, echo=FALSE, message=FALSE, warning=FALSE}
+#----
+#Gather and import sales data
+
+#gallonage reports have data based on taxes and must be downloaded from http://www.myfloridalicense.com/DBPR/alcoholic-beverages-and-tobacco/alcoholic-beverages-tobacco-revenue-reporting/ ; there are individual reports for breweries and brewpubs: rename brewery_sales and brewpub_sales; brewpub is missing date so files must be labeled as downloaded (eg., brewpub_<year>-<month>.xlsx)
+
+
+#pulls in brewery sales data
+brewery_sales<-read_xlsx("brewery_sales.xlsx") %>% clean_names()
+
+#combines brewpub files, standardizes names
+suppressWarnings(setwd("Brewpub_data"))
+file.list <- list.files(pattern = '*.xlsx')
+brewpub_sales <- rbindlist(lapply(file.list, read_excel), idcol = "origin")
+brewpub_sales[, origin := factor(origin, labels = basename(file.list))]
+brewpub_sales <- brewpub_sales%>% clean_names()
+setwd("...")
+
+brewpub_sales <- brewpub_sales %>%
+    mutate(month = str_extract(origin,"(?<=_)(.+)(?=\\.)")) %>% 
+  relocate(month, .before="origin")
+
+brewpub_sales$origin = NULL
+
+#Clean up and extract local sales data
+
+#makes date a _date_
+brewery_sales$month<-ym(brewery_sales$month)
+brewpub_sales$month<-ym(brewpub_sales$month)
+
+#makes pints, quarts, into gallons
+brewery_sales$pint_gallons<-brewery_sales$total_pints/8
+brewery_sales$quart_gallons<-brewery_sales$total_quarts/4
+brewery_sales$total_gallons<-rowSums(brewery_sales[,c("pint_gallons","quart_gallons","total_bulk_gallons")])
+
+#makes brewery_sales subset dataframe keeping the same columns as brewpub data, renames brewpub column, merges 
+brewery_sales_total<-subset(brewery_sales,select=c("month","license_number","distributor","city","total_gallons"))
+brewpub_sales_total<-brewpub_sales %>%
+  rename(total_gallons=taxable_bulk_gallon_sales)
+
+all_beer_sales <- rbind(brewery_sales_total,brewpub_sales_total)
+
+#All state beer sales
+florida_beer_sales <-all_beer_sales %>% filter(distributor %in% florida_breweries$dba)
+
+#pulls First Coast out of beer sales
+fc_beer_sales<-all_beer_sales %>% filter(distributor %in% fc_breweries$dba)
+
+#groups beer sales by date
+fc_beer_sales_total<-fc_beer_sales %>%
+  group_by(month) %>%
+  summarize(
+    total=sum(total_gallons)
+  )
+
+florida_beer_sales_total <- florida_beer_sales %>%
+  group_by(month) %>%
+  summarise(
+    total=sum(total_gallons)
+  )
+
+florida_beer_sales_2023 <- florida_beer_sales %>%
+  group_by(distributor, month=floor_date(month, "year")) %>%
+   summarize(total_gallons=sum(total_gallons)) %>% 
+  filter(month=="2023-01-01") %>%
+  arrange(desc(total_gallons)
+          )
+
+fc_beer_sales_2023 <- fc_beer_sales %>% 
+  group_by(distributor, month=floor_date(month, "year")) %>%
+   summarize(total_gallons=sum(total_gallons)) %>% 
+  filter(month=="2023-01-01") %>%
+  arrange(desc(total_gallons))
+
+
+```
+
+# Sales
+The state collects data (for taxation purposes) on _direct_ sales by breweries -- generally speaking, these are sales made in a taproom. (Unfortunately, overall sales numbers, showing sales through the brewer-wholesaler-retailer system, are not available.)
+
+This data must be downloaded manually; the most recent information was pulled `r format(file.mtime("brewery_sales.xlsx"), "%B %d, %Y")`. The data, which is split between breweries and brewpubs, can be found [here](https://www2.myfloridalicense.com/alcoholic-beverages-and-tobacco/alcoholic-beverages-tobacco-revenue-reporting/).
+
+Breweries across the state obviously saw those sales collapse during the height of the Covid-19 pandemic. Right after the pandemic, the First Coast rebounded more than the state as a whole.
+
+Embeddable versions of the Florida chart [is here](https://datawrapper.dwcdn.net/Mkh3c/1/) and of the First Coast chart [is here](https://datawrapper.dwcdn.net/Mirvi/1/)
+
+```{r sales-charts, figures-side, fig.show="hold", out.width="50%", echo=FALSE, warning=FALSE}
+knitr::opts_chunk$set(echo = TRUE, fig.pos= "h")
+#makes chart
+
+ggplot(florida_beer_sales_total, aes(x=florida_beer_sales_total$month, y=florida_beer_sales_total$total)) +
+  geom_line(color="blue3", size=4, limetype=4) +
+    theme_ipsum() +
+  ggtitle("Taproom sales in Florida") +
+  labs(y="Gallons sold", x="") +
+  scale_y_comma() 
+
+
+ggplot(fc_beer_sales_total, aes(x=fc_beer_sales_total$month, y=fc_beer_sales_total$total)) +
+  geom_line(color="blue", size=4, limetype=4) +
+    theme_ipsum() +
+  ggtitle("Taproom sales on First Coast") +
+  labs(y="Gallons sold", x="") +
+  scale_y_comma()
+```
+
+
+```{r sales-charts-to-dw, echo=FALSE, warning=FALSE, results='hide', include=FALSE}
+# Sends data to datawrapper
+
+#Florida Beer Sales
+dw_data_to_chart(
+  x=florida_beer_sales_total,
+  chart_id = "Mkh3c"
+)
+
+dw_publish_chart(chart_id = "Mkh3c")
+
+#First Coast Beer Sales
+dw_data_to_chart(
+  x=fc_beer_sales_total,
+  chart_id = "Mirvi"
+)
+
+dw_publish_chart(chart_id = "Mirvi")
+
+
+```
+
+```{r, group-for-list, echo=FALSE, warning=FALSE}
+
+#sets variable for latest data
+listend<-max(as.Date(fc_beer_sales$month))
+
+#pulls together yearly sales; I think this is duplicated halfway through the list data below, but I'm keeping for now
+beer_sales_for_list <- fc_beer_sales %>%
+  filter(as.Date(month) <= as.Date(listend),
+        (as.Date(month) >= as.Date(listend-months(11)))
+  )
+
+beer_sales_for_list <- beer_sales_for_list %>%
+  group_by(distributor) %>%
+  summarise(
+    total=sum(total_gallons)
+  )
+
+#creates data for JBJ list
+
+brewery_list <- bind_rows(brewery_sales, brewpub_sales)
+brewery_list <- brewery_list %>%
+  filter(distributor %in% fc_breweries$dba)
+brewery_list$month <- ymd(brewery_list$month)
+
+brewery_list <- brewery_list %>%
+    filter(as.Date(month) <= as.Date(listend),
+        (as.Date(month) >= as.Date(listend-months(11))) 
+    ) 
+
+brewery_list <- brewery_list %>%
+  group_by(distributor) %>%
+  summarise(across(total_pints:total_gallons, sum))
+brewery_list$pint_gallons = NULL
+brewery_list$quart_gallons = NULL
+
+brewery_list <- left_join(brewery_list, fc_breweries, by=join_by(distributor == dba)) %>%
+  select(contains(c('distributor','total_pints','total_quarts','total_bulk_gallons','total_gallons','location_address_1','location_address_2','location_address_3','location_city','location_state','location_zip','original_licensure_date')))
+brewery_list <- brewery_list %>%
+  relocate(starts_with("total"), .after = original_licensure_date) %>%
+  arrange(desc(total_gallons))
+
+write.csv(brewery_list,"brewery_list.csv")
+    
+
+```
+
+The brewery in Florida that has sold the most beer directly to consumers in 2023 is `r str_to_title(florida_beer_sales_2023$distributor[1])`, which has sold `r format(florida_beer_sales_2023$total_gallons[1], big.mark=",")` gallons.
+
+Among First Coast craft breweries — excluding Budweiser — `r str_to_title(fc_beer_sales_2023$distributor[1])`'s taproom moved the largest amount of beer, selling `r format(fc_beer_sales_2023$total_gallons[1], big.mark=",")` gallons directly to consumers.
+
+In the latest 12 months of data -- from `r format(as.Date(listend-months(11)), "%B %Y")` to `r format(as.Date(listend), "%B %Y")`  -- the `r nrow(beer_sales_for_list)` breweries and brewpubs in the area that reported sales moved `r format(sum(beer_sales_for_list$total), big.mark=",")` gallons of beer.
+
+A complete list of breweries and brewpubs ranked by how much they sold can be downloaded [here](brewery_list.csv).
+
