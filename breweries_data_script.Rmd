@@ -24,8 +24,6 @@ library(data.table)
 library(hrbrthemes)
 library(ggplot2)
 
-datawrapper_auth(api_key = "EkZeD3Se7zfgF2a3k2CrVLlIUfK8O0qLtTYQcMIx1fw8EwDQrOjhw1ZFkiDpJnli")
-
 ```
 
 ```{r get-license-data, echo=FALSE, message=FALSE}
@@ -212,12 +210,13 @@ An embeddable version of the chart can be [found here](https://datawrapper.dwcdn
 brewery_sales<-read_xlsx("brewery_sales.xlsx") %>% clean_names()
 
 #combines brewpub files, standardizes names
-suppressWarnings(setwd("Brewpub_data"))
+old_wd <- getwd()
+setwd("Brewpub_data")
 file.list <- list.files(pattern = '*.xlsx')
 brewpub_sales <- rbindlist(lapply(file.list, read_excel), idcol = "origin")
 brewpub_sales[, origin := factor(origin, labels = basename(file.list))]
 brewpub_sales <- brewpub_sales%>% clean_names()
-setwd("...")
+setwd(old_wd)
 
 brewpub_sales <- brewpub_sales %>%
     mutate(month = str_extract(origin,"(?<=_)(.+)(?=\\.)")) %>% 
